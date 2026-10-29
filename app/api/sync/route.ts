@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { MasteryStatus } from '@prisma/client';
 
+export const dynamic = 'force-dynamic';
+
 interface SyncAttemptPayload {
   exerciseId: string;
   isCorrect: boolean;

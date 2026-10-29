@@ -6,6 +6,7 @@ import { sendEmail } from '@/lib/email/send-email';
 import { EmailDeliveryStatus } from '@prisma/client';
 
 export const maxDuration = 300; // Allow 5 minutes on Vercel Pro/Enterprise for batch processing
+export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   // 1. Security: Verify Vercel Cron Secret

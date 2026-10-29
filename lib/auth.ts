@@ -45,11 +45,19 @@ export function verifyToken(token: string): SessionPayload | null {
   }
 }
 
-export async function getSession(): Promise<SessionPayload | null> {
-  const cookieStore = cookies();
-  const token = cookieStore.get(COOKIE_NAME)?.value;
-  if (!token) return null;
-  return verifyToken(token);
+export async function getSession(req?: any): Promise<SessionPayload | null> {
+  try {
+    if (req && 'cookies' in req && typeof req.cookies.get === 'function') {
+      const token = req.cookies.get(COOKIE_NAME)?.value;
+      if (token) return verifyToken(token);
+    }
+    const cookieStore = cookies();
+    const token = cookieStore.get(COOKIE_NAME)?.value;
+    if (!token) return null;
+    return verifyToken(token);
+  } catch {
+    return null;
+  }
 }
 
 export function assertParent(session: SessionPayload | null): asserts session is SessionPayload {

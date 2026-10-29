@@ -3,6 +3,8 @@ import { getSession } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { createMicroSubscriptionSession, createDonationSession } from '@/lib/stripe';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();

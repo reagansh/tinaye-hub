@@ -3,6 +3,8 @@ import { db } from '@/lib/db';
 import { getSession, verifyPin, generateToken, COOKIE_NAME } from '@/lib/auth';
 import { Role } from '@prisma/client';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
