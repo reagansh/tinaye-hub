@@ -1,0 +1,376 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ----------------------------------------------------
+// ENUMS
+// ----------------------------------------------------
+
+enum Role {
+  PARENT
+  CHILD
+  TEACHER
+  ADMIN
+}
+
+enum SubscriptionTier {
+  FREE
+  MICRO_1USD
+  DONATION_SUPPORTER
+  SCHOLARSHIP
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  TRIALING
+}
+
+enum CompetencyCategory {
+  PHONICS_MABHII
+  VOCABULARY_MAZWI
+  NOUN_CLASSES_MIPANDA
+  VERBS_ZVIITO
+  IDEOPHONES_NYAUDZOSINGWI
+  PROVERBS_TSUMO
+  IDIOMS_MADIMIKIRA
+  COMPREHENSION_NHAURWA
+  CULTURE_TSIKA
+}
+
+enum MasteryStatus {
+  NOT_STARTED
+  FAMILIAR
+  PROFICIENT
+  MASTERED
+}
+
+enum ExerciseType {
+  MULTIPLE_CHOICE
+  DRAG_MATCH
+  FILL_BLANK
+  SENTENCE_ORDER
+  DIALOGUE_BRANCH
+}
+
+enum DigestFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum EmailDeliveryStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+// ----------------------------------------------------
+// USER & FAMILY HIERARCHY (RBAC)
+// ----------------------------------------------------
+
+model User {
+  id                String            @id @default(cuid())
+  email             String            @unique
+  passwordHash      String
+  role              Role              @default(PARENT)
+  firstName         String
+  lastName          String
+  phone             String?
+  preferredLanguage String            @default("sn") // "sn" (Shona) or "en"
+  
+  // Commercial SaaS & Micro-Subscriptions ($1/mo or Donation)
+  stripeCustomerId  String?           @unique
+  subscriptionTier  SubscriptionTier  @default(FREE)
+  
+  // Parent Notifications & Analytics Opt-In
+  emailDigestOptIn  Boolean           @default(true)
+  digestFrequency   DigestFrequency   @default(WEEKLY)
+  
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  // Relational mappings
+  children          ChildProfile[]
+  subscriptions     Subscription[]
+  donations         Donation[]
+  reportDigests     ParentReportDigest[]
+
+  @@index([email])
+  @@index([stripeCustomerId])
+}
+
+model ChildProfile {
+  id              String            @id @default(cuid())
+  parentId        String
+  parent          User              @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  
+  displayName     String
+  gradeLevel      Int               // 1 through 7 (ZIMSEC Primary alignment)
+  avatarId        String            @default("shumba") // e.g. "shumba", "mvuu", "nzou", "hangaiwa", "tsuro"
+  pinHash         String?           // Optional 4-digit PIN for device sharing between siblings
+  
+  // Gamification & Habit Loop
+  currentStreak   Int               @default(0)
+  longestStreak   Int               @default(0)
+  lastActiveDate  DateTime?
+  totalXp         Int               @default(0)
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  // Relational mappings
+  masteryRecords    MasteryRecord[]
+  exerciseAttempts  ExerciseAttempt[]
+  dailyActivities   DailyActivity[]
+  reportDigests     ParentReportDigest[]
+  syncLogs          OfflineSyncLog[]
+
+  @@index([parentId])
+  @@index([gradeLevel])
+}
+
+// ----------------------------------------------------
+// MONETIZATION: $1/MONTH MICRO-SUBSCRIPTION & DONATIONS
+// ----------------------------------------------------
+
+model Subscription {
+  id                   String              @id @default(cuid())
+  userId               String
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  stripeSubscriptionId String?             @unique
+  stripePriceId        String?
+  status               SubscriptionStatus  @default(ACTIVE)
+  tier                 SubscriptionTier    @default(MICRO_1USD)
+  amountCents          Int                 @default(100) // 100 = $1.00 USD
+  currency             String              @default("usd")
+  
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean             @default(false)
+  
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  @@index([userId])
+  @@index([stripeSubscriptionId])
+}
+
+model Donation {
+  id                    String    @id @default(cuid())
+  userId                String?
+  user                  User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  stripePaymentIntentId String?   @unique
+  amountCents           Int       // Pay-what-you-want amount
+  currency              String    @default("usd")
+  donorName             String?
+  message               String?
+  
+  createdAt             DateTime  @default(now())
+
+  @@index([userId])
+  @@index([stripePaymentIntentId])
+}
+
+// ----------------------------------------------------
+// COPYRIGHT-SAFE ZIMSEC CURRICULUM ARCHITECTURE
+// ----------------------------------------------------
+
+model CurriculumTopic {
+  id             String             @id @default(cuid())
+  gradeLevel     Int                // 1 to 7
+  code           String             @unique // e.g., "G3-MIPANDA-01"
+  titleShona     String
+  titleEnglish   String
+  category       CompetencyCategory
+  description    String
+  orderIndex     Int
+  iconSvgName    String             @default("book-open")
+
+  lessons        Lesson[]
+  competencies   Competency[]
+
+  @@index([gradeLevel, category])
+}
+
+model Lesson {
+  id             String             @id @default(cuid())
+  topicId        String
+  topic          CurriculumTopic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  
+  title          String
+  slug           String             @unique
+  description    String
+  orderIndex     Int
+  contentJson    Json               // Structured pedagogical narrative & procedural SVG triggers
+  
+  exercises      Exercise[]
+
+  @@index([topicId])
+  @@index([slug])
+}
+
+model Competency {
+  id             String             @id @default(cuid())
+  topicId        String
+  topic          CurriculumTopic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  
+  code           String             @unique // e.g., "CMP-NOUN-CL1-2"
+  nameShona      String
+  nameEnglish    String
+  category       CompetencyCategory
+
+  masteryRecords MasteryRecord[]
+
+  @@index([topicId])
+  @@index([category])
+}
+
+model Exercise {
+  id                 String             @id @default(cuid())
+  lessonId           String
+  lesson             Lesson             @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  
+  type               ExerciseType
+  questionShona      String
+  instructionsShona  String
+  payloadJson        Json               // Options, correct answer, vector asset mappings
+  socraticHintsJson  Json               // Multi-tiered Socratic compassionate hints in Shona
+  
+  targetCompetencyCode String?
+
+  attempts           ExerciseAttempt[]
+
+  @@index([lessonId])
+}
+
+// ----------------------------------------------------
+// MASTERY TRACKING & SOCRATIC PEDAGOGICAL PROGRESS
+// ----------------------------------------------------
+
+model MasteryRecord {
+  id                String        @id @default(cuid())
+  childId           String
+  child             ChildProfile  @relation(fields: [childId], references: [id], onDelete: Cascade)
+  
+  competencyId      String
+  competency        Competency    @relation(fields: [competencyId], references: [id], onDelete: Cascade)
+  
+  masteryLevel      MasteryStatus @default(NOT_STARTED)
+  masteryScore      Float         @default(0.0) // 0.0 to 1.0 (100%)
+  totalAttempts     Int           @default(0)
+  correctAttempts   Int           @default(0)
+  consecutiveCorrect Int          @default(0)
+  needsIntervention Boolean       @default(false)
+  
+  lastPracticedAt   DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@unique([childId, competencyId])
+  @@index([childId])
+  @@index([needsIntervention])
+}
+
+model ExerciseAttempt {
+  id                 String       @id @default(cuid())
+  childId            String
+  child              ChildProfile @relation(fields: [childId], references: [id], onDelete: Cascade)
+  
+  exerciseId         String
+  exercise           Exercise     @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  
+  isCorrect          Boolean
+  chosenAnswer       String
+  hintsUsedCount     Int          @default(0)
+  timeSpentSeconds   Int          @default(0)
+  
+  // Offline-first sync metadata
+  offlineTimestamp   DateTime     // When completed on student's offline client
+  syncedAt           DateTime     @default(now()) // When synced with cloud DB
+  clientBatchId      String?      // Batch identifier for idempotency
+  
+  createdAt          DateTime     @default(now())
+
+  @@index([childId])
+  @@index([exerciseId])
+  @@index([offlineTimestamp])
+}
+
+model DailyActivity {
+  id             String       @id @default(cuid())
+  childId        String
+  child          ChildProfile @relation(fields: [childId], references: [id], onDelete: Cascade)
+  
+  date           DateTime     @db.Date
+  xpEarned       Int          @default(0)
+  exercisesDone  Int          @default(0)
+  timeSeconds    Int          @default(0)
+
+  @@unique([childId, date])
+  @@index([childId, date])
+}
+
+// ----------------------------------------------------
+// AUTOMATED PARENT PROGRESS & ANALYTICS REPORTS
+// ----------------------------------------------------
+
+model ParentReportDigest {
+  id                     String              @id @default(cuid())
+  parentId               String
+  parent                 User                @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  
+  childId                String
+  child                  ChildProfile        @relation(fields: [childId], references: [id], onDelete: Cascade)
+  
+  weekStartDate          DateTime
+  weekEndDate            DateTime
+  
+  lessonsCompleted       Int
+  totalTimeSpentMinutes  Int
+  streakDays             Int
+  overallMasteryScore    Float               // 0.0 to 1.0
+  
+  // Granular analytics for report cards
+  strengthsJson          Json                // e.g. ["Mupanda 1 & 2 (100%)", "Nyaudzosingwi (92%)"]
+  areasOfImprovementJson Json                // e.g. ["Mupanda 7 & 8 (Chi-/Zvi-)", "Past Tense Verbs"]
+  recommendationsShona   String              // Pedagogical advice for parents
+  recommendationsEnglish String
+  
+  emailStatus            EmailDeliveryStatus @default(QUEUED)
+  emailMessageId         String?
+  sentAt                 DateTime?
+  
+  createdAt              DateTime            @default(now())
+
+  @@index([parentId])
+  @@index([childId])
+  @@index([emailStatus])
+}
+
+// ----------------------------------------------------
+// OFFLINE SYNC IDEMPOTENCY & DEVICE TRACKING
+// ----------------------------------------------------
+
+model OfflineSyncLog {
+  id               String       @id @default(cuid())
+  childId          String
+  child            ChildProfile @relation(fields: [childId], references: [id], onDelete: Cascade)
+  
+  deviceId         String
+  batchId          String       @unique
+  itemsSynced      Int
+  clientAppVersion String
+  syncedAt         DateTime     @default(now())
+
+  @@index([childId])
+  @@index([batchId])
+}
